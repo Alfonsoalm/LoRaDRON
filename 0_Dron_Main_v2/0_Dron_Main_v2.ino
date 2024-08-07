@@ -435,27 +435,28 @@ void readLoRa() {
       throttle_target = (dataPacket[6] << 8) | dataPacket[7];
       button_A4 = dataPacket[8] == 1;     
       button_A5 = dataPacket[9] == 1;
+
+      // Enviar datos en formato JSON
+      BTSerial.print(" yaw_angle_target:"); BTSerial.print(yaw_angle_target);
+      BTSerial.print(", pitch_angle_target:"); BTSerial.print(pitch_angle_target);
+      BTSerial.print(", roll_angle_target:"); BTSerial.print(roll_angle_target);
+      BTSerial.print(", throttle_target:"); BTSerial.print(throttle_target);
+      // BTSerial.print(", button_A4:"); BTSerial.print(button_A4);
+      // BTSerial.print(", button_A5:"); BTSerial.println(button_A5);
     } else {
-      // BTSerial.println(F("Error en el tamaño del paquete recibido."));
+      BTSerial.println(F("Error en el tamaño del paquete recibido."));
     }
   }
 }
 
 void sendBluetoothData() {
   // Enviar datos en formato JSON
-  BTSerial.print(" PITCH:");
-  BTSerial.print(pitch);
-  BTSerial.print(", ROLL:");
-  BTSerial.print(roll);
-  BTSerial.print(", ESC1:");
-  BTSerial.print(ESC1);
-  BTSerial.print(", ESC2:");
-  BTSerial.print(ESC2);
-  BTSerial.print(", ESC3:");
-  BTSerial.print(ESC3);
-  BTSerial.print(", ESC4:");
-  BTSerial.print(ESC4);
-  delay(1000);
+  BTSerial.print(" PITCH:"); BTSerial.print(pitch);
+  BTSerial.print(", ROLL:"); BTSerial.print(roll);
+  BTSerial.print(", ESC1:"); BTSerial.print(ESC1);
+  BTSerial.print(", ESC2:"); BTSerial.print(ESC2);
+  BTSerial.print(", ESC3:"); BTSerial.print(ESC3);
+  BTSerial.print(", ESC4:"); BTSerial.println(ESC4);
 }
 
 
@@ -725,15 +726,15 @@ void loop() {
   } while (reading_time_seconds < usCiclo/1000);
   loop_timer = micros();
 
-  // Serial.print(F("Ciclo: ")); Serial.println(reading_time_seconds);
   // Leer datos de LoRa
-  // readLoRa();
+  readLoRa();
   // Enviar datos a través de Bluetooth
   sendBluetoothData();
 
-  // Llamar a las funciones de lectura y procesamiento
-  // readMPU6050();
-  // processMPU6050();
+  // Llamar a las funciones de lectura de MPU
+  readMPU6050();
+  // Calculo de los angulos a partir de lecturas MPU
+  processMPU6050();
 
   // // Función que administra los modos de funcionamiento del dron
   // // timer_f5 = micros();
