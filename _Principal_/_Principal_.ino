@@ -7,6 +7,7 @@
 #include <MPU6500_WE.h>
 #include <PID_v1.h>
 #include <SoftwareSerial.h>
+#include <MsTimer2.h>
 // Configuración del puerto serie para el módulo Bluetooth
 // SoftwareSerial Serial(0, 1); // RX, TX - Asegúrate de conectar RX del HC-06 al pin 10 y TX al pin 11
 #define PI 3.14159265358979323846
@@ -15,18 +16,26 @@
 #define MPU6050_ADDR 0x69
 #define BMP280_ADDR 0x76
 #define ADS1115_ADDR 0x48
-#define KP_ang 0.24 // 0.2 // 2 //0.5 //0.25
-#define KI_ang 0.0035 //0.006 0.025
-#define KD_ang 25 // 15 // 15 // 15 // 5 
-#define KP_w 2 // 2 // 1
 
-#define KI_w 0.003  // 0.02 // 0.01
-#define KD_w 0 // 10/ 0
-#define PID_ANG_SAT1 2000
-#define PID_ANG_SAT2 2000
-#define PID_W_SAT1 380
-#define PID_W_SAT2 380
+#define TCICLO_MS (6.0)
+#define TCICLO_US (TCICLO_MS * 1000.0)
+#define TCICLO_S (TCICLO_MS / 1000.0)
+
+#define KP_ang (0.2) // 2, 11                 MIN: 1    -->   MAX: 20
+#define KI_ang (KP_ang * 0.01) //0.1, 0.002    MIN: 0.0  -->   MAX: 0.05
+#define KD_ang (KP_ang * 8) //5, 80           MIN: 12   -->   MAX: 90
+
+#define KP_w (0.5) // 1
+#define KI_w (KP_w * 0.001)  // 0.002
+#define KD_w (KP_w * 0) // 0
+
+#define PID_ANG_SAT_INTEGRAL (40 * KI_ang) // 130
+#define PID_ANG_SAT_OUTPUT (2000) // 130
+#define PID_W_SAT_INTEGRAL (4000 * KI_w) // 380
+#define PID_W_SAT_OUTPUT (380) // 380
+
 MPU6050 mpu;
+
 // MPU6500_WE mpu_master = MPU6500_WE(MPU6500_ADDR);
 
 // LORA -------------------------------->>>>
@@ -51,7 +60,7 @@ int currentLed = 0;
 
 // MOTORES ----------------------------->>>>
 // Definición de pines para los motores y LEDs
-const int motorPins[4] = {A2, A0, A1, A3};
+const int motorPins[4] = {A3, 9, 8, A2};
 unsigned long tiempo_motores_start;
 float ESC1 = 0, ESC2 = 0, ESC3 = 0, ESC4 = 0;
 const int ESC_MIN = 900; const int ESC_MAX = 1900;
@@ -111,6 +120,9 @@ const double Kp_w_Roll = KP_w, Ki_w_Roll = KI_w, Kd_w_Roll = KD_w; // Kp_w_Roll 
 const double Kp_w_Yaw = KP_w, Ki_w_Yaw = KI_w, Kd_w_Yaw = KD_w; // Kp_w_Yaw = 1.0, Ki_w_Yaw = 0.05, Kd_w_Yaw = 0;
 double w_Pitch_OUT = 0, w_Roll_OUT = 0, w_Yaw_OUT = 0;
 double ang_Pitch_OUT = 0, ang_Roll_OUT = 0;
+
+unsigned long time_handle, time_handle_start = 0;
+
 // CONTROL_PID -------------------------<<<<
 
 // Variable para gestionar el estado del modo actual
@@ -129,35 +141,42 @@ void setup() {
   // Inicializamos IMU para mediciones angulares
   setupIMUs();
   // Inicializamos Barometro para altitud, presión a. y temperatura
-  setupBAR();       
+  //setupBAR();       
   // Inicializamos ADC para medir bateria
-  setupADC();       
+  //setupADC();       
   // Configuracion de motores
   setupMotors();    
   // Configuracion de LEDS
   setupLEDs();      
   // Lectura de la bateria del dron
-  readBattery();    
-  if (batteryPercent < 15){
-    Serial.println("   Bateria Baja, vuelva a casa !!");
-  }
+  // readBattery();    
+  // if (batteryPercent < 15){
+  //   Serial.println("   Bateria Baja, vuelva a casa !!");
+  // }
   // Meter los parametros del PID
   setupPIDparams();
-  loop_timer = micros();
+  // Setup timer
+  MsTimer2::set(TCICLO_MS, handleModes);  // Configura Timer2 para generar una interrupción cada 6 ms
+  MsTimer2::start();  // Inicia el temporizador
+
+  loop_timer = millis();
 }
 
 
 void loop() {
-  unsigned long startTime;
+  unsigned long startTime, prev_loop_timer;
   // Sincronización del ciclo
-  while (micros() - loop_timer < usCiclo);
-  loop_timer = micros();
-  //Serial.println("aa");
+  while (micros() - loop_timer < 10000);
+  prev_loop_timer = loop_timer; loop_timer = micros();
+  //Serial.print("Tiempo bucle: "); Serial.println(micros() - prev_loop_timer);
   // Leer datos de LoRa
+  startTime = micros();
   readLoRa();
+  //Serial.print("Tiempo readLORA: "); Serial.println(micros() - startTime);
   // Enviar datos a través de Bluetooth
+  startTime = micros();
   sendBluetoothData();
-
+  //Serial.print("Tiempo SEND: ");Serial.println(micros() - startTime);
   if (currentMode != CALIBRATION){
     startTime = micros();
     getMPUData(MPU6500_ADDR, gx_offset_6500, gy_offset_6500, gz_offset_6500, ax_offset_6500, ay_offset_6500, az_offset_6500, pitch_6500, roll_6500, gx_6500, gy_6500, gz_6500);
@@ -173,27 +192,26 @@ void loop() {
     // Serial.print(", averagedData:"); Serial.print(micros() - startTime); Serial.println(" us");
   }
 
-  // Función que administra los modos de funcionamiento del dron
-  handleModes();
+  //Serial.print("Tiempo handle: ");Serial.println(time_handle);
 }
 
 void setupIMUs(){
   unsigned long startTime;
   startTime = micros();
   setupMPU(MPU6500_ADDR);
-  Serial.print(" setup_MPU6500:"); Serial.print(micros() - startTime); Serial.println(" us");  
+  //Serial.print(" setup_MPU6500:"); Serial.print(micros() - startTime); Serial.println(" us");  
 
   startTime = micros();
   setupMPU(MPU6050_ADDR);
-  Serial.print(" setup_MPU6050:"); Serial.print(micros() - startTime); Serial.println(" us");  
+  //Serial.print(" setup_MPU6050:"); Serial.print(micros() - startTime); Serial.println(" us");  
 
   startTime = micros();
   calibrateMPU(MPU6500_ADDR, gx_offset_6500, gy_offset_6500, gz_offset_6500, ax_offset_6500, ay_offset_6500, az_offset_6500);
-  Serial.print(" calibrate_MPU6500:"); Serial.print(micros() - startTime); Serial.println(" us");  
+  //Serial.print(" calibrate_MPU6500:"); Serial.print(micros() - startTime); Serial.println(" us");  
   
   startTime = micros();
   calibrateMPU(MPU6050_ADDR, gx_offset_6050, gy_offset_6050, gz_offset_6050, ax_offset_6050, ay_offset_6050, az_offset_6050);
-  Serial.print(" calibrate_MPU6050:"); Serial.print(micros() - startTime); Serial.println(" us");  
+  //Serial.print(" calibrate_MPU6050:"); Serial.print(micros() - startTime); Serial.println(" us");  
 }
 
 void setupMPU(uint8_t ADDR) {
@@ -217,6 +235,16 @@ void setupMPU(uint8_t ADDR) {
   Wire.write(0x1A); // Registro CONFIG
   Wire.write(0x03); // Valor para 42 Hz de frecuencia de corte
   Wire.endTransmission();
+  /*
+    Frecuencia de corte del filtro pasa bajos:
+    256Hz(0ms):0x00
+    188Hz(2ms):0x01
+    98Hz(3ms):0x02
+    42Hz(4.9ms):0x03
+    20Hz(8.5ms):0x04
+    10Hz(13.8ms):0x05
+    5Hz(19ms):0x06
+  */
 }
 
 void calibrateMPU(uint8_t ADDR, float &gx_offset, float &gy_offset, float &gz_offset,
@@ -335,11 +363,12 @@ void setupLoRa() {
   // inicializar y configurar modulo lora a 433 Mhz
   if (!LoRa.begin(433E6)) {
     Serial.println(F("Error al iniciar LoRa"));    
+  } else {
+    LoRa.setSpreadingFactor(7);
+    LoRa.setSignalBandwidth(125E3);
+    LoRa.setCodingRate4(5);
+    Serial.println(F("LoRa inicializado"));
   }
-  LoRa.setSpreadingFactor(7);
-  LoRa.setSignalBandwidth(125E3);
-  LoRa.setCodingRate4(5);
-  Serial.println(F("LoRa inicializado"));
 }
 
 void setupMotors() {
@@ -446,6 +475,10 @@ void readBattery() {
 
 void readLoRa() {
   int packetSize = LoRa.parsePacket();
+  /*yaw_angle_target = 0;
+  pitch_angle_target = 0;
+  roll_angle_target = 0;
+  throttle_target = 0;*/
   if (packetSize) {
     byte dataPacket[10];
     int index = 0;
@@ -460,38 +493,67 @@ void readLoRa() {
       throttle_target = (dataPacket[6] << 8) | dataPacket[7];
       button_A4 = dataPacket[8] == 1;     
       button_A5 = dataPacket[9] == 1;
-      //Serial.print(" button_A4:"); Serial.print(button_A4);
-      //Serial.print(", button_A5:"); Serial.println(button_A5);
+      //Serial.print("B4: "); Serial.println(button_A4);
+      //Serial.print(", B5: "); Serial.println(button_A5);
     } else {
       Serial.println(F("Error en el tamaño del paquete recibido."));
     }
   }
 }
 
+char buffer[512];  // Asegúrate de que el tamaño del buffer sea suficiente
+
 void sendBluetoothData() {
-  // Serial.print(" PITCH:"); Serial.println(-pitch); Serial.print(" PITCH_target:"); Serial.println(map(pitch_angle_target, 0, 1023, -35, 35)); Serial.print(", PITCH_output:"); Serial.println(ang_Pitch_OUT);
-  // Serial.print(", ROLL:"); Serial.println(roll); Serial.print(", ROLL_target:"); Serial.println(map(roll_angle_target, 0, 1023, -35, 35)); Serial.print(", ROLL_output:"); Serial.println(ang_Roll_OUT);
-  // Serial.print(", PITCH_RATE:"); Serial.println(gx); Serial.print(", PITCH_RATE_target:"); Serial.println(ang_Pitch_OUT); // Serial.print(", PITCH_RATE_output:"); Serial.println(w_Pitch_OUT);
-  // Serial.print(", ROLL_RATE:"); Serial.println(gy); Serial.print(", ROLL_RATE_target:"); Serial.println(ang_Roll_OUT); Serial.print(", ROLL_RATE_output:"); Serial.println(w_Roll_OUT);
-  // Serial.print(", THROTTLE_target:"); Serial.print(map (throttle_target, 0, 1023, 970, 1800));
-  // Serial.print(", YAW_target:"); Serial.print(map(yaw_angle_target, 0, 1023, 35, -35));
-  // Serial.print(" Error_pitch_pid:"); Serial.println(pitchPID.error); Serial.print(", Error_roll_pid:"); Serial.println(rollPID.error);
-  // Serial.print(", Error_pitch_rate_pid:"); Serial.println(pitchRatePID.error); Serial.print(", Error_roll_rate_pid:"); Serial.println(rollRatePID.error); Serial.print(", Error_yaw_rate_pid:"); Serial.println(yawRatePID.error);
+  Serial.print(F(" PITCH:")); Serial.println(-pitch); Serial.print(" PITCH_target:"); Serial.println(map(pitch_angle_target, 0, 1023, 35, -35)); Serial.print(", PITCH_output:"); Serial.println(ang_Pitch_OUT);
+  Serial.print(F(", ROLL:")); Serial.println(roll); Serial.print(", ROLL_target:"); Serial.println(map(roll_angle_target, 0, 1023, 35, -35)); Serial.print(", ROLL_output:"); Serial.println(ang_Roll_OUT);
+  Serial.print(", PITCH_RATE:"); Serial.println(gx); Serial.print(", PITCH_RATE_target:"); Serial.println(ang_Pitch_OUT); Serial.print(", PITCH_RATE_output:"); Serial.println(w_Pitch_OUT);
+  Serial.print(", ROLL_RATE:"); Serial.println(gy); Serial.print(", ROLL_RATE_target:"); Serial.println(ang_Roll_OUT); Serial.print(", ROLL_RATE_output:"); Serial.println(w_Roll_OUT);
+  Serial.print(", THROTTLE_target:"); Serial.println(map (throttle_target, 0, 1023, 970, 1800));
+  Serial.print(F(", YAW:")); Serial.println(gz); Serial.print(", YAW_target:"); Serial.println(map(yaw_angle_target, 0, 1023, -35, 35));
+  Serial.print(", Error_pitch_pid:"); Serial.println(pitchPID.error); Serial.print(", Error_roll_pid:"); Serial.println(rollPID.error);
+  Serial.print(", Error_pitch_rate_pid:"); Serial.println(pitchRatePID.error); Serial.print(", Error_roll_rate_pid:"); Serial.println(rollRatePID.error); Serial.print(", Error_yaw_rate_pid:"); Serial.println(yawRatePID.error);
   if (currentMode == PID_CONTROL){
-    Serial.print(" ESC1:"); Serial.println(ESC1);
-    Serial.print(", ESC2:"); Serial.println(ESC2); 
-    Serial.print(", ESC3:"); Serial.println(ESC3); 
-    Serial.print(", ESC4:"); Serial.println(ESC4);
-    Serial.print(", MAX:"); Serial.println(1800); 
-    Serial.print(", MIN:"); Serial.println(1000);  
+    Serial.print(F(", ESC1:")); Serial.println(ESC1);
+    Serial.print(F(", ESC2:")); Serial.println(ESC2); 
+    Serial.print(F(", ESC3:")); Serial.println(ESC3); 
+    Serial.print(F(", ESC4:")); Serial.println(ESC4);
+    Serial.print(F(", MAX:")); Serial.println(2000); 
+    Serial.print(F(", MIN:")); Serial.println(900);  
+  }
+
+  switch (currentMode) {
+
+    case WAITING:
+      Serial.println(F("Modo actual: ESPERA"));
+      break;
+
+    case CALIBRATION:
+      Serial.println(F("Modo actual: CALIBRATION"));
+      break;
+
+    case MOTOR_TEST:
+      Serial.println(F("Modo actual: MOTOR_TEST"));
+      break;
+
+    case PID_CONTROL:
+      Serial.println(F("Modo actual: PID_CONTROL"));
+      break;
+
+    case SAFETYBRAKE:
+      Serial.println(F("Modo actual: SAFETYBRAKE"));
+      break;
+
+    default:
+      Serial.println(F("Modo actual: DESCONOCIDO"));
+      break;
   }
 }
 
 void calibrateESC() {
-  Serial.println(F("Iniciando calibración de ESC..."));
+  //Serial.println(F("Iniciando calibración de ESC..."));
   // Mapeo del throttle
   throttle_target_map = map(throttle_target, 0, 1023, 900, 2000);
-  Serial.print("Throttle: "); Serial.println(throttle_target_map);
+  //Serial.print("Throttle: "); Serial.println(throttle_target_map);
   ESC1 = ESC2 = ESC3 = ESC4 = throttle_target_map;  // Asignar el mismo valor a todos los motores
   // Iniciar señales PWM
   for (int i = 0; i < 4; i++) {
@@ -499,7 +561,7 @@ void calibrateESC() {
   }
   tiempo_motores_start = micros();
   // Controlar señales PWM
-  unsigned long endCycleTime = tiempo_motores_start + 6000;
+  unsigned long endCycleTime = tiempo_motores_start + ESC_MAX;
   while (micros() < endCycleTime) {
     unsigned long currentTime = micros();
     if (currentTime - tiempo_motores_start >= ESC1) digitalWrite(motorPins[0], LOW);
@@ -507,7 +569,7 @@ void calibrateESC() {
     if (currentTime - tiempo_motores_start >= ESC3) digitalWrite(motorPins[2], LOW);
     if (currentTime - tiempo_motores_start >= ESC4) digitalWrite(motorPins[3], LOW);
   }
-  Serial.println(F("Calibración de ESC completada."));
+  //Serial.println(F("Calibración de ESC completada."));
   calibrationDone = true;
   setLEDs(LED_MIN_BRIGHTNESS);  // Apagar todos los LEDs después de la calibración
 }
@@ -548,18 +610,24 @@ void setLEDs(int value) {
 double calculatePID(PIDVariables &pid, double input, double setPoint, double integralSat, double outputSat) {
   // Calculo del error y de los valores de la parte proporcional e integral
   pid.error = setPoint - input;
-  pid.P = pid.Kp * pid.error;
+  pid.P = pid.error; // pid.P = pid.Kp * pid.error;
   pid.I += pid.Ki * pid.error;
   // Enfoque antiwindup 1 (Comentado)
   pid.D = pid.Kd * (input - pid.previousInput);// pid.I = constrain(pid.I, -integralSat, integralSat); // **Comentar con enfoque 2**
-  pid.output = pid.P + pid.I + pid.D;  // pid.output = constrain(pid.output, -outputSat, outputSat); // **Comentar con enfoque 2**
+  if (pid.I < -integralSat) {
+    pid.I = -integralSat;
+  } else if (pid.I > integralSat) {
+    pid.I = integralSat;
+  }
+  pid.output = pid.Kp * (pid.P + pid.I + pid.D);  // pid.output = constrain(pid.output, -outputSat, outputSat); // **Comentar con enfoque 2**
   //Enfoque antiwindup 2
   if (pid.output < -outputSat) {
     pid.output = -outputSat;
     pid.I -= pid.Ki * pid.error;
   } else if (pid.output > outputSat) {
     pid.output = outputSat;
-    pid.I -= pid.Ki * pid.error;}
+    pid.I -= pid.Ki * pid.error;
+  }
   pid.previousInput = input;  // Asignación de valor actual al previo para proximo ciclo
   return pid.output; 
 }
@@ -569,8 +637,8 @@ void pidControlMode() {
   pitchPID.input = -pitch;
   rollPID.input = roll;
   // Mapeado de las referencias a valores entre -35 y 35º
-  pitchPID.setPoint = map(pitch_angle_target, 0, 1023, -35, 35);
-  rollPID.setPoint = map(roll_angle_target, 0, 1023, -35, 35);
+  pitchPID.setPoint = map(pitch_angle_target, 0, 1023, 35, -35);
+  rollPID.setPoint = map(roll_angle_target, 0, 1023, 35, -35);
   yawRatePID.setPoint = map(yaw_angle_target, 0, 1023, -35, 35);
   // Establecer valores pequeños en cero para evitar mover dron
   if (pitchPID.setPoint > -3 && pitchPID.setPoint < 3) {
@@ -580,8 +648,8 @@ void pidControlMode() {
   } if (yawRatePID.setPoint > -3 && yawRatePID.setPoint < 3) {
     yawRatePID.setPoint = 0;}
   // Calculo de los PID de angulos pitch y roll
-  ang_Pitch_OUT = calculatePID(pitchPID, pitchPID.input, pitchPID.setPoint, PID_ANG_SAT1, PID_ANG_SAT2);
-  ang_Roll_OUT = calculatePID(rollPID, rollPID.input, rollPID.setPoint, PID_ANG_SAT1, PID_ANG_SAT2);
+  ang_Pitch_OUT = calculatePID(pitchPID, pitchPID.input, pitchPID.setPoint, PID_ANG_SAT_INTEGRAL, PID_ANG_SAT_OUTPUT);
+  ang_Roll_OUT = calculatePID(rollPID, rollPID.input, rollPID.setPoint, PID_ANG_SAT_INTEGRAL, PID_ANG_SAT_OUTPUT);
   // Asignación de velocidades a los PID de velocidades
   pitchRatePID.input = gx; // velocidad angular del pitch de la MPU
   rollRatePID.input = gy;  // velocidad angular del roll de la MPU
@@ -589,23 +657,45 @@ void pidControlMode() {
   pitchRatePID.setPoint = ang_Pitch_OUT;
   rollRatePID.setPoint = ang_Roll_OUT;
   // Establecer puntos de consigna de velocidad angular
-  w_Pitch_OUT = calculatePID(pitchRatePID, pitchRatePID.input, pitchRatePID.setPoint, PID_W_SAT1, PID_W_SAT2);
-  w_Roll_OUT = calculatePID(rollRatePID, rollRatePID.input, rollRatePID.setPoint, PID_W_SAT1, PID_W_SAT2);
-  w_Yaw_OUT = calculatePID(yawRatePID, yawRatePID.input, yawRatePID.setPoint, PID_W_SAT1, PID_W_SAT2);
   // Mapeado del Throttle
   throttle_target_map = map (throttle_target, 0, 1023, 0, 1850);
   // Calcular valores PWM de los motores y limitarlos
-  if (throttle_target_map <= 800) {
+  if (throttle_target_map <= 700) {
     pitchPID.I = 0; rollPID.I = 0; yawRatePID.I  = 0; rollRatePID.I = 0; pitchRatePID.I = 0;
     ESC1 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);   
     ESC2 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);
     ESC3 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);
     ESC4 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);
   } else {// Si el throttle es mayor a 1300us, el control de estabilidad se activa.
-    ESC1 = constrain(throttle_target_map - w_Pitch_OUT - w_Roll_OUT, ESC_MIN, ESC_MAX); // - w_Yaw_OUT;
-    ESC2 = constrain(throttle_target_map - w_Pitch_OUT + w_Roll_OUT, ESC_MIN, ESC_MAX); // + w_Yaw_OUT;
-    ESC3 = constrain(throttle_target_map + w_Pitch_OUT + w_Roll_OUT, ESC_MIN, ESC_MAX); // - w_Yaw_OUT;
-    ESC4 = constrain(throttle_target_map + w_Pitch_OUT - w_Roll_OUT, ESC_MIN, ESC_MAX); // + w_Yaw_OUT;
+    w_Pitch_OUT = calculatePID(pitchRatePID, pitchRatePID.input, pitchRatePID.setPoint, PID_W_SAT_INTEGRAL, PID_W_SAT_OUTPUT);
+    w_Roll_OUT = calculatePID(rollRatePID, rollRatePID.input, rollRatePID.setPoint, PID_W_SAT_INTEGRAL, PID_W_SAT_OUTPUT);
+    w_Yaw_OUT = calculatePID(yawRatePID, yawRatePID.input, yawRatePID.setPoint, PID_W_SAT_INTEGRAL, PID_W_SAT_OUTPUT);
+
+    ESC1 = constrain(throttle_target_map + w_Pitch_OUT + w_Roll_OUT + w_Yaw_OUT, 1100, ESC_MAX); // - w_Yaw_OUT;
+    ESC2 = constrain(throttle_target_map + w_Pitch_OUT - w_Roll_OUT - w_Yaw_OUT, 1100, ESC_MAX); // + w_Yaw_OUT;
+    ESC3 = constrain(throttle_target_map - w_Pitch_OUT - w_Roll_OUT + w_Yaw_OUT, 1100, ESC_MAX); // - w_Yaw_OUT;
+    ESC4 = constrain(throttle_target_map - w_Pitch_OUT + w_Roll_OUT - w_Yaw_OUT, 1100, ESC_MAX); // + w_Yaw_OUT;
+
+    if((ESC1 <= 1100)||(ESC1 >= ESC_MAX)) {
+      pitchRatePID.I -= pitchRatePID.Ki * pitchRatePID.error;
+      rollRatePID.I -= rollRatePID.Ki * rollRatePID.error;
+      yawRatePID.I -= yawRatePID.Ki * yawRatePID.error;
+    } 
+    if((ESC2 <= 1100)||(ESC2 >= ESC_MAX)) {
+      pitchRatePID.I -= pitchRatePID.Ki * pitchRatePID.error;
+      rollRatePID.I -= rollRatePID.Ki * rollRatePID.error;
+      yawRatePID.I -= yawRatePID.Ki * yawRatePID.error;
+    } 
+    if((ESC3 <= 1100)||(ESC3 >= ESC_MAX)) {
+      pitchRatePID.I -= pitchRatePID.Ki * pitchRatePID.error;
+      rollRatePID.I -= rollRatePID.Ki * rollRatePID.error;
+      yawRatePID.I -= yawRatePID.Ki * yawRatePID.error;
+    } 
+    if((ESC4 <= 1100)||(ESC4 >= ESC_MAX)) {
+      pitchRatePID.I -= pitchRatePID.Ki * pitchRatePID.error;
+      rollRatePID.I -= rollRatePID.Ki * rollRatePID.error;
+      yawRatePID.I -= yawRatePID.Ki * yawRatePID.error;
+    } 
   }
   // Funcion de envio de los valores PWM a los motores mapeados 100-255
   envio_PWM();
@@ -613,17 +703,18 @@ void pidControlMode() {
 
 void envio_PWM() {
   // Para generar las 4 señales PWM, el primer paso es poner estas señales a 1 (HIGH).
-  digitalWrite(motorPins[0], HIGH);
-  digitalWrite(motorPins[1], HIGH);
-  digitalWrite(motorPins[2], HIGH);
-  digitalWrite(motorPins[3], HIGH);
-  long tiempo_motores_start = micros();
-  // Pasamos las señales PWM a estado LOW cuando haya transcurrido el tiempo definido en las variables ESCx_us
-  while (digitalRead(motorPins[0]) == HIGH || digitalRead(motorPins[1]) == HIGH || digitalRead(motorPins[2]) == HIGH || digitalRead(motorPins[3]) == HIGH) {
-    if (tiempo_motores_start + ESC1 <= micros()) digitalWrite(motorPins[0], LOW);
-    if (tiempo_motores_start + ESC2 <= micros()) digitalWrite(motorPins[1], LOW);
-    if (tiempo_motores_start + ESC3 <= micros()) digitalWrite(motorPins[2], LOW);
-    if (tiempo_motores_start + ESC4 <= micros()) digitalWrite(motorPins[3], LOW);
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(motorPins[i], HIGH);
+  }
+  tiempo_motores_start = micros();
+  // Controlar señales PWM
+  unsigned long endCycleTime = tiempo_motores_start + ESC_MAX;
+  while (micros() < endCycleTime) {
+    unsigned long currentTime = micros();
+    if (currentTime - tiempo_motores_start >= ESC1) digitalWrite(motorPins[0], LOW);
+    if (currentTime - tiempo_motores_start >= ESC2) digitalWrite(motorPins[1], LOW);
+    if (currentTime - tiempo_motores_start >= ESC3) digitalWrite(motorPins[2], LOW);
+    if (currentTime - tiempo_motores_start >= ESC4) digitalWrite(motorPins[3], LOW);
   }
 }
 
@@ -677,79 +768,81 @@ void motorTestMode() {
     }
 }
 
+
 void handleModes() {
+  sei();
+  time_handle_start = micros();
   // Manejo del modo actual
   switch (currentMode) {
     case WAITING:
-      //Serial.println("Modo actual: ESPERA");
-      //Serial.println("Inicializando sistema...");
-      setRGBColor(1, 1, 1); // Ponemos color BLANCO en el RGB Led
-      testLEDs();
+      // Serial.println("Inicializando sistema...");
+      // Serial.print(" button_A4:"); Serial.print(button_A4);
+      // Serial.print(", button_A5:"); Serial.println(button_A5);
+      //setRGBColor(0, 1, 1); // Ponemos color BLANCO en el RGB Led
+      //testLEDs();
       if (button_A4) {
-        Serial.println("------------------------------------");
-        Serial.println("Cuidado !!, Iniciando calibración...");
-        Serial.println("------------------------------------");
+        // Serial.println(F("------------------------------------"));
+        // Serial.println(F("Cuidado !!, Iniciando calibración..."));
+        // Serial.println(F("------------------------------------"));
         currentMode = CALIBRATION;
         return;
       }
       break;
 
     case CALIBRATION:
-      // Serial.println("Modo actual: CALIBRATION");
-      setRGBColor(0, 1, 0); // Ponemos color Verde en el RGB Led
-      testLEDs();
+      //setRGBColor(0, 1, 0); // Ponemos color Verde en el RGB Led
+      //testLEDs();
       calibrateESC();
       // Si la calibración está completa y estamos en el modo CALIBRATION, cambiar al modo MOTOR_TEST
       if (button_A5) {
-        Serial.println("-------------------------------------------------");
-        Serial.println("Calibración completada. Cambiando a PID_CONTROL...");
-        Serial.println("-------------------------------------------------");
+        // Serial.println(F("--------------------------------------------------"));
+        // Serial.println(F("Calibración completada. Cambiando a PID_CONTROL..."));
+        // Serial.println(F("--------------------------------------------------"));
         currentMode = PID_CONTROL;
         return;
       }
       break;
 
     case MOTOR_TEST:
-      // Serial.println("Modo actual: MOTOR_TEST");
-      setRGBColor(1, 0, 1); // Ponemos color Azul en el RGB Led
+      //setRGBColor(0, 0, 1); // Ponemos color Azul en el RGB Led
       motorTestMode();
       if (button_A4) {
-        Serial.println("-----------------------------------");
-        Serial.println("Cuidado !!, Cambiando a PID_MODE...");
-        Serial.println("-----------------------------------");
+        // Serial.println(F("-----------------------------------"));
+        //Serial.println(F("Cuidado !!, Cambiando a PID_MODE..."));
+        //Serial.println(F("-----------------------------------"));
         currentMode = PID_CONTROL;
         return;
       }
       break;
 
     case PID_CONTROL:
-      // Serial.println("Modo actual: PID_CONTROL");
-      setRGBColor(1, 1, 0); // Ponemos color Azul Verdoso en el RGB Led
+      //setRGBColor(0, 1, 0); // Ponemos color Azul Verdoso en el RGB Led
       pidControlMode();
       // Cambiar al modo PID_CONTROL si se presiona el botón A5 en MOTOR_TEST
       if (button_A4) {
-        Serial.println("----------------------------------------------");
-        Serial.println("Apagando motores y Cambiando a SAFETY_BRAKE...");
-        Serial.println("----------------------------------------------");
+        //Serial.println(F("----------------------------------------------"));
+        //Serial.println(F("Apagando motores y Cambiando a SAFETY_BRAKE..."));
+        //Serial.println(F("----------------------------------------------"));
         currentMode = SAFETYBRAKE;
         return;
       }
       break;
 
     case SAFETYBRAKE:
-      setRGBColor(1, 0, 0); // Ponemos color Rojo en el RGB Led
+      //setRGBColor(0, 0, 0); // Ponemos color Rojo en el RGB Led
       safetyBrakeMode();
       delay(3000);
       if (button_A4) {
-        Serial.println("-------------------------------------");
-        Serial.println("Reiniciado modos de funcionamiento...");
-        Serial.println("-------------------------------------");
+        Serial.println(F("-------------------------------------"));
+        Serial.println(F("Reiniciado modos de funcionamiento..."));
+        Serial.println(F("-------------------------------------"));
         currentMode = WAITING;
         return;
       }
       break;
     default:
-      Serial.println("Modo actual: DESCONOCIDO");
+      //Serial.println(F("Modo actual: DESCONOCIDO"));
       break;
   }
+    time_handle = micros()-time_handle_start;
 }

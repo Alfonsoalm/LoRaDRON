@@ -5,17 +5,19 @@ const int YAW_PIN = A6;         // VRY IZQUIERDO
 const int PITCH_PIN = A1;       // VRX IZQUIERDO
 const int ROLL_PIN = A2;        // VRX DERECHO
 const int THROTTLE_PIN = A7;    // VRY DERECHO
+
 const int BUTTON_A4_PIN = A4;   // Botón A4
 const int BUTTON_A5_PIN = A5;   // Botón A5
+
 const int LED1_PIN = 8;         // LED para señalización
 const int LED2_PIN = 7;         // LED para señalización
 
 unsigned long lastSendTime = 0;
-const unsigned long sendInterval = 50; // Intervalo de envío en milisegundos
+const unsigned long sendInterval = 5; // Intervalo de envío en milisegundos
 const unsigned long ledOnDuration = 2000; // Duración de los LEDs encendidos en milisegundos
-
 unsigned long ledA4OnStart = 0;
 unsigned long ledA5OnStart = 0;
+
 bool ledA4On = false;
 bool ledA5On = false;
 
@@ -116,7 +118,7 @@ void loop() {
     dataPacket[7] = throttleValue & 0xFF;
     dataPacket[8] = buttonA4Pressed ? 1 : 0; // Estado del botón A4
     dataPacket[9] = buttonA5Pressed ? 1 : 0; // Estado del botón A5
-
+/*
     Serial.println("Sending packet:");
     Serial.print("yaw:"); Serial.print(yawValue);
     Serial.print(",pitch:"); Serial.print(pitchValue);
@@ -124,7 +126,7 @@ void loop() {
     Serial.print(",throttle:"); Serial.println(throttleValue);
     Serial.print(",buttonA4:"); Serial.print(buttonA4Pressed);
     Serial.print(",buttonA5:"); Serial.println(buttonA5Pressed);
-
+*/
     // Enviar paquete
     LoRa.beginPacket();
     LoRa.write(dataPacket, sizeof(dataPacket));
