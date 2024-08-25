@@ -21,13 +21,17 @@
 #define TCICLO_US (TCICLO_MS * 1000.0)
 #define TCICLO_S (TCICLO_MS / 1000.0)
 
-#define KP_ang (0.2) // 2, 11                 MIN: 1    -->   MAX: 20
+#define KP_ang (4) // 2, 11                 MIN: 1    -->   MAX: 20
 #define KI_ang (KP_ang * 0.01) //0.1, 0.002    MIN: 0.0  -->   MAX: 0.05
-#define KD_ang (KP_ang * 8) //5, 80           MIN: 12   -->   MAX: 90
+#define KD_ang (KP_ang * 4) //5, 80           MIN: 12   -->   MAX: 90
 
-#define KP_w (0.5) // 1
+#define KP_w (2) // 1
 #define KI_w (KP_w * 0.001)  // 0.002
 #define KD_w (KP_w * 0) // 0
+
+#define KP_w_yaw (3) // 1
+#define KI_w_yaw (KP_w_yaw * 0.01)  // 0.002
+#define KD_w_yaw (KP_w_yaw * 0) // 0
 
 #define PID_ANG_SAT_INTEGRAL (40 * KI_ang) // 130
 #define PID_ANG_SAT_OUTPUT (2000) // 130
@@ -117,7 +121,7 @@ const double Kp_Pitch = KP_ang, Ki_Pitch = KI_ang, Kd_Pitch = KD_ang; // Kp_Pitc
 const double Kp_Roll = KP_ang, Ki_Roll = KI_ang, Kd_Roll = KD_ang;  // Kp_Roll=0.5, Ki_Roll=0.05, Kd_Roll=10
 const double Kp_w_Pitch = KP_w, Ki_w_Pitch = KI_w, Kd_w_Pitch = KD_w; // Kp_w_Pitch = 2.0, Ki_w_Pitch = 0.02, Kd_w_Pitch = 0
 const double Kp_w_Roll = KP_w, Ki_w_Roll = KI_w, Kd_w_Roll = KD_w; // Kp_w_Roll = 2.0, Ki_w_Roll = 0.02, Kd_w_Roll = 0;
-const double Kp_w_Yaw = KP_w, Ki_w_Yaw = KI_w, Kd_w_Yaw = KD_w; // Kp_w_Yaw = 1.0, Ki_w_Yaw = 0.05, Kd_w_Yaw = 0;
+const double Kp_w_Yaw = KP_w_yaw, Ki_w_Yaw = KI_w_yaw, Kd_w_Yaw = KD_w_yaw; // Kp_w_Yaw = 1.0, Ki_w_Yaw = 0.05, Kd_w_Yaw = 0;
 double w_Pitch_OUT = 0, w_Roll_OUT = 0, w_Yaw_OUT = 0;
 double ang_Pitch_OUT = 0, ang_Roll_OUT = 0;
 
