@@ -21,13 +21,17 @@
 #define TCICLO_US (TCICLO_MS * 1000.0)
 #define TCICLO_S (TCICLO_MS / 1000.0)
 
-#define KP_ang (0.2) // 2, 11                 MIN: 1    -->   MAX: 20
-#define KI_ang (KP_ang * 0.01) //0.1, 0.002    MIN: 0.0  -->   MAX: 0.05
-#define KD_ang (KP_ang * 8) //5, 80           MIN: 12   -->   MAX: 90
+#define KP_ang (5) // 2, 11                 MIN: 1    -->   MAX: 20
+#define KI_ang (KP_ang * 0.001) //0.1, 0.002    MIN: 0.0  -->   MAX: 0.05
+#define KD_ang (KP_ang * 1) //5, 80           MIN: 12   -->   MAX: 90
 
-#define KP_w (0.5) // 1
-#define KI_w (KP_w * 0.001)  // 0.002
+#define KP_w (0.4) // 1
+#define KI_w (KP_w * 0.01)  // 0.002
 #define KD_w (KP_w * 0) // 0
+
+#define KP_w_yaw (3) // 1
+#define KI_w_yaw (KP_w_yaw * 0.005)  // 0.002
+#define KD_w_yaw (KP_w_yaw * 0) // 0
 
 #define PID_ANG_SAT_INTEGRAL (40 * KI_ang) // 130
 #define PID_ANG_SAT_OUTPUT (2000) // 130
@@ -117,7 +121,7 @@ const double Kp_Pitch = KP_ang, Ki_Pitch = KI_ang, Kd_Pitch = KD_ang; // Kp_Pitc
 const double Kp_Roll = KP_ang, Ki_Roll = KI_ang, Kd_Roll = KD_ang;  // Kp_Roll=0.5, Ki_Roll=0.05, Kd_Roll=10
 const double Kp_w_Pitch = KP_w, Ki_w_Pitch = KI_w, Kd_w_Pitch = KD_w; // Kp_w_Pitch = 2.0, Ki_w_Pitch = 0.02, Kd_w_Pitch = 0
 const double Kp_w_Roll = KP_w, Ki_w_Roll = KI_w, Kd_w_Roll = KD_w; // Kp_w_Roll = 2.0, Ki_w_Roll = 0.02, Kd_w_Roll = 0;
-const double Kp_w_Yaw = KP_w, Ki_w_Yaw = KI_w, Kd_w_Yaw = KD_w; // Kp_w_Yaw = 1.0, Ki_w_Yaw = 0.05, Kd_w_Yaw = 0;
+const double Kp_w_Yaw = KP_w_yaw, Ki_w_Yaw = KI_w_yaw, Kd_w_Yaw = KD_w_yaw; // Kp_w_Yaw = 1.0, Ki_w_Yaw = 0.05, Kd_w_Yaw = 0;
 double w_Pitch_OUT = 0, w_Roll_OUT = 0, w_Yaw_OUT = 0;
 double ang_Pitch_OUT = 0, ang_Roll_OUT = 0;
 
@@ -177,22 +181,6 @@ void loop() {
   startTime = micros();
   sendBluetoothData();
   //Serial.print("Tiempo SEND: ");Serial.println(micros() - startTime);
-  if (currentMode != CALIBRATION){
-    startTime = micros();
-    getMPUData(MPU6500_ADDR, gx_offset_6500, gy_offset_6500, gz_offset_6500, ax_offset_6500, ay_offset_6500, az_offset_6500, pitch_6500, roll_6500, gx_6500, gy_6500, gz_6500);
-    // Serial.print(", getMPUdata_MPU6500:"); Serial.print(micros() - startTime); Serial.println(" us");  
-    
-    startTime = micros();
-    getMPUData(MPU6050_ADDR, gx_offset_6050, gy_offset_6050, gz_offset_6050, ax_offset_6050, ay_offset_6050, az_offset_6050, pitch_6050, roll_6050, gx_6050, gy_6050, gz_6050);
-    // Serial.print(", getMPUdata_MPU6050:"); Serial.print(micros() - startTime); Serial.println(" us");  
-    
-    startTime = micros();
-    getAveragedData(pitch_6050, roll_6050, gx_6050, gy_6050, gz_6050,
-                    pitch_6500, roll_6500, gx_6500, gy_6500, gz_6500);
-    // Serial.print(", averagedData:"); Serial.print(micros() - startTime); Serial.println(" us");
-  }
-
-  //Serial.print("Tiempo handle: ");Serial.println(time_handle);
 }
 
 void setupIMUs(){
@@ -280,7 +268,7 @@ void calibrateMPU(uint8_t ADDR, float &gx_offset, float &gy_offset, float &gz_of
 
 void getMPUData(uint8_t ADDR, float gx_offset, float gy_offset, float gz_offset,
                 float ax_offset, float ay_offset, float az_offset, 
-                float &pitch, float &roll, float &gx, float &gy, float &gz) {
+                float &pitch_tot, float &roll_tot, float &gx_tot, float &gy_tot, float &gz_tot) {
   int16_t ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw;
   float pitch_acc, roll_acc;
   // Leer datos del sensor
@@ -299,31 +287,31 @@ void getMPUData(uint8_t ADDR, float gx_offset, float gy_offset, float gz_offset,
     float ax = (ax_raw - ax_offset);
     float ay = (ay_raw - ay_offset);
     float az = (az_raw - az_offset);
-    gx = (gx_raw - gx_offset) / 65.5;
-    gy = (gy_raw - gy_offset) / 65.5;
-    gz = (gz_raw - gz_offset) / 65.5;
+    gx_tot = (gx_raw - gx_offset) / 65.5;
+    gy_tot = (gy_raw - gy_offset) / 65.5;
+    gz_tot = (gz_raw - gz_offset) / 65.5;
     // Calcular el tiempo transcurrido desde la última lectura
     unsigned long currentReadingTime = micros();
     reading_time = currentReadingTime - lastReadingTime; // Tiempo transcurrido en microsegundos
     lastReadingTime = currentReadingTime; // Actualizar el tiempo de la última lectura
     // Calcular ángulos de inclinación con datos del giroscopio
     float dt = reading_time / 1000000.0; // Convertir microsegundos a segundos
-    pitch += gx * dt;
-    roll  += gy * dt;
+    pitch_tot += gx_tot * dt;
+    roll_tot  += gy_tot * dt;
     float gz_adjusted = gz * dt * PI / (65.5 * 180 * 1000);
-    pitch += roll * sin(gz_adjusted);
-    roll  -= pitch * sin(gz_adjusted);
+    pitch_tot += roll_tot * sin(gz_adjusted);
+    roll_tot  -= pitch_tot * sin(gz_adjusted);
     // Calcular ángulos de inclinación con datos del acelerómetro
     float acc_total_vector = sqrt(pow(ax, 2) + pow(ay, 2) + pow(az + 4096, 2));
     pitch_acc = asin((float)ay / acc_total_vector) * 180 / PI; // Convertir a grados
     roll_acc  = asin((float)ax / acc_total_vector) * -180 / PI; // Convertir a grados
     // Filtro complementario
     if (set_gyro_angles) {
-      pitch = pitch * 0.995 + pitch_acc * 0.005;
-      roll  = roll * 0.995 + roll_acc  * 0.005;
+      pitch_tot = pitch_tot * 0.995 + pitch_acc * 0.005;
+      roll_tot  = roll_tot * 0.995 + roll_acc  * 0.005;
     } else {
-      pitch = pitch_acc;
-      roll  = roll_acc;
+      pitch_tot = pitch_acc;
+      roll_tot  = roll_acc;
       set_gyro_angles = true;
     }
   }
@@ -504,7 +492,7 @@ void readLoRa() {
 char buffer[512];  // Asegúrate de que el tamaño del buffer sea suficiente
 
 void sendBluetoothData() {
-  Serial.print(F(" PITCH:")); Serial.println(-pitch); Serial.print(" PITCH_target:"); Serial.println(map(pitch_angle_target, 0, 1023, 35, -35)); Serial.print(", PITCH_output:"); Serial.println(ang_Pitch_OUT);
+  Serial.print(F(" PITCH:")); Serial.println(-pitch); Serial.print(", PITCH_target:"); Serial.println(map(pitch_angle_target, 0, 1023, 35, -35)); Serial.print(", PITCH_output:"); Serial.println(ang_Pitch_OUT);
   Serial.print(F(", ROLL:")); Serial.println(roll); Serial.print(", ROLL_target:"); Serial.println(map(roll_angle_target, 0, 1023, 35, -35)); Serial.print(", ROLL_output:"); Serial.println(ang_Roll_OUT);
   Serial.print(", PITCH_RATE:"); Serial.println(gx); Serial.print(", PITCH_RATE_target:"); Serial.println(ang_Pitch_OUT); Serial.print(", PITCH_RATE_output:"); Serial.println(w_Pitch_OUT);
   Serial.print(", ROLL_RATE:"); Serial.println(gy); Serial.print(", ROLL_RATE_target:"); Serial.println(ang_Roll_OUT); Serial.print(", ROLL_RATE_output:"); Serial.println(w_Roll_OUT);
@@ -520,7 +508,7 @@ void sendBluetoothData() {
     Serial.print(F(", MAX:")); Serial.println(2000); 
     Serial.print(F(", MIN:")); Serial.println(900);  
   }
-
+  Serial.print(", Tiempo handle: ");Serial.println(time_handle);
   switch (currentMode) {
 
     case WAITING:
@@ -647,26 +635,31 @@ void pidControlMode() {
     rollPID.setPoint = 0;
   } if (yawRatePID.setPoint > -3 && yawRatePID.setPoint < 3) {
     yawRatePID.setPoint = 0;}
-  // Calculo de los PID de angulos pitch y roll
-  ang_Pitch_OUT = calculatePID(pitchPID, pitchPID.input, pitchPID.setPoint, PID_ANG_SAT_INTEGRAL, PID_ANG_SAT_OUTPUT);
-  ang_Roll_OUT = calculatePID(rollPID, rollPID.input, rollPID.setPoint, PID_ANG_SAT_INTEGRAL, PID_ANG_SAT_OUTPUT);
-  // Asignación de velocidades a los PID de velocidades
-  pitchRatePID.input = gx; // velocidad angular del pitch de la MPU
-  rollRatePID.input = gy;  // velocidad angular del roll de la MPU
-  yawRatePID.input = gz;  // velocidad angular del yaw de la MPU
-  pitchRatePID.setPoint = ang_Pitch_OUT;
-  rollRatePID.setPoint = ang_Roll_OUT;
+
   // Establecer puntos de consigna de velocidad angular
   // Mapeado del Throttle
   throttle_target_map = map (throttle_target, 0, 1023, 0, 1850);
   // Calcular valores PWM de los motores y limitarlos
-  if (throttle_target_map <= 700) {
+  if (throttle_target_map <= /*1180*/ 1150) {
     pitchPID.I = 0; rollPID.I = 0; yawRatePID.I  = 0; rollRatePID.I = 0; pitchRatePID.I = 0;
+    pitchPID.previousInput = pitchPID.input; rollPID.previousInput = rollPID.input; yawRatePID.previousInput = yawRatePID.input;
+    pitchRatePID.previousInput = pitchRatePID.input; rollRatePID.previousInput = rollRatePID.input;
     ESC1 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);   
     ESC2 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);
     ESC3 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);
     ESC4 = constrain(throttle_target_map, ESC_MIN, ESC_MAX);
   } else {// Si el throttle es mayor a 1300us, el control de estabilidad se activa.
+
+    // Calculo de los PID de angulos pitch y roll
+    ang_Pitch_OUT = calculatePID(pitchPID, pitchPID.input, pitchPID.setPoint, PID_ANG_SAT_INTEGRAL, PID_ANG_SAT_OUTPUT);
+    ang_Roll_OUT = calculatePID(rollPID, rollPID.input, rollPID.setPoint, PID_ANG_SAT_INTEGRAL, PID_ANG_SAT_OUTPUT);
+    // Asignación de velocidades a los PID de velocidades
+    pitchRatePID.input = -gx; // velocidad angular del pitch de la MPU
+    rollRatePID.input = gy;  // velocidad angular del roll de la MPU
+    yawRatePID.input = gz;  // velocidad angular del yaw de la MPU
+    pitchRatePID.setPoint = ang_Pitch_OUT;
+    rollRatePID.setPoint = ang_Roll_OUT;
+
     w_Pitch_OUT = calculatePID(pitchRatePID, pitchRatePID.input, pitchRatePID.setPoint, PID_W_SAT_INTEGRAL, PID_W_SAT_OUTPUT);
     w_Roll_OUT = calculatePID(rollRatePID, rollRatePID.input, rollRatePID.setPoint, PID_W_SAT_INTEGRAL, PID_W_SAT_OUTPUT);
     w_Yaw_OUT = calculatePID(yawRatePID, yawRatePID.input, yawRatePID.setPoint, PID_W_SAT_INTEGRAL, PID_W_SAT_OUTPUT);
@@ -772,6 +765,12 @@ void motorTestMode() {
 void handleModes() {
   sei();
   time_handle_start = micros();
+  if (currentMode != CALIBRATION){
+    getMPUData(MPU6500_ADDR, gx_offset_6500, gy_offset_6500, gz_offset_6500, ax_offset_6500, ay_offset_6500, az_offset_6500, pitch_6500, roll_6500, gx_6500, gy_6500, gz_6500);
+    getMPUData(MPU6050_ADDR, gx_offset_6050, gy_offset_6050, gz_offset_6050, ax_offset_6050, ay_offset_6050, az_offset_6050, pitch_6050, roll_6050, gx_6050, gy_6050, gz_6050);
+    getAveragedData(pitch_6050, roll_6050, gx_6050, gy_6050, gz_6050,
+                    pitch_6500, roll_6500, gx_6500, gy_6500, gz_6500);
+  }
   // Manejo del modo actual
   switch (currentMode) {
     case WAITING:
